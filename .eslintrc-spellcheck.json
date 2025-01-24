@@ -1,0 +1,52 @@
+{
+  "parser": "espree",
+  "parserOptions": {
+    "ecmaVersion": 2021,
+    "sourceType": "script"
+  },
+  "env": {
+    "node": true
+  },
+  "plugins": ["spellcheck"],
+  "extends": [],
+  "rules": {
+    "no-undef": "off",
+    "prettier/prettier": "off",
+    "spellcheck/spell-checker": [
+      "error",
+      {
+        "comments": false,
+        "strings": true,
+        "identifiers": true,
+        "lang": "en_US",
+        "skipWords": [
+          "branch",
+          "build",
+          "chore",
+          "ci",
+          "clsx",
+          "docs",
+          "feat",
+          "fix",
+          "gitlab",
+          "grafana",
+          "husky",
+          "lucide",
+          "merge",
+          "mui",
+          "mysql",
+          "nextauth",
+          "refactor",
+          "revert",
+          "shadcn",
+          "sitemap",
+          "spelling",
+          "style",
+          "test",
+          "twmerge",
+          "wip"
+        ]
+      }
+    ]
+  }
+}

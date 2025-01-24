@@ -1,0 +1,165 @@
+image: node:22.0.0
+
+stages:
+  - setup
+  - validate
+  - sonarqube
+  - test
+  - build
+  - docker
+  - performance
+
+variables:
+  DOCKER_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+cache:
+  paths:
+    - node_modules/
+
+install_dependencies:
+  stage: setup
+  script:
+    - npm ci
+  artifacts:
+    paths:
+      - node_modules/
+
+sonarqube-scanner:
+  stage: sonarqube
+  needs:
+    - install_dependencies
+  image:
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: ['']
+  variables:
+    SONAR_USER_HOME: '${CI_PROJECT_DIR}/.sonar' # Defines the location of the analysis task cache
+    GIT_DEPTH: '0' # Tells git to fetch all the branches of the project, required by the analysis task
+  cache:
+    key: '${CI_JOB_NAME}'
+    paths:
+      - .sonar/cache
+  before_script:
+    - echo "${SONAR_PROP_INFRASTRUCTURE}" > ${CI_PROJECT_DIR}/sonar-project.properties
+  script:
+    - sonar-scanner
+  allow_failure: true
+  only:
+    - main
+
+mr-size:
+  stage: validate
+  only:
+    - merge_requests
+  script:
+    - git fetch origin $CI_MERGE_REQUEST_TARGET_BRANCH_NAME:target_branch
+    - git fetch origin $CI_COMMIT_SHA
+    - |
+      LINES_CHANGED=$(git diff --stat target_branch...$CI_COMMIT_SHA | awk '
+        BEGIN {total=0}
+        {
+            if ($1 !~ /\.(svg)$/ && $1 !~ /\.snap$/ && $1 != "package-lock.json" && $1 != "yarn.lock") {
+                total+=$3
+            }
+        }
+        END {print total}'
+      )
+      echo "Total lines changed (excluding .svg, .snap, package-lock.json, and yarn.lock): $LINES_CHANGED"
+      if [ "$LINES_CHANGED" -gt "${MR_MAX_LINES:-250}" ]; then
+        echo "❌ Error: MR contains more than ${MR_MAX_LINES:-250} lines of changes (excluding .svg, .snap, package-lock.json, and yarn.lock files)"
+        echo "Please split this MR into smaller ones"
+        exit 1
+      fi
+
+lint:
+  stage: test
+  needs:
+    - install_dependencies
+  script:
+    - npm run lint
+
+unit_tests:
+  stage: test
+  needs:
+    - install_dependencies
+  script:
+    - npm run test
+  coverage: /All files[^|]*\|[^|]*\s+([\d\.]+)/
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+
+e2e_tests:
+  stage: test
+  needs:
+    - install_dependencies
+  services:
+    - name: mysql:8.0
+      alias: mysql
+      command: ['mysqld', '--default-authentication-plugin=mysql_native_password']
+  variables:
+    DB_HOST: mysql
+    DB_PORT: 3306
+    DB_USERNAME: root
+    DB_PASSWORD: ${DB_TEST_PASSWORD}
+    DB_DATABASE: nestjs_template_test
+    MYSQL_ROOT_PASSWORD: ${MYSQL_TEST_ROOT_PASSWORD}
+    MYSQL_DATABASE: nestjs_template_test
+  before_script:
+    - apt-get update && apt-get install -y netcat-traditional default-mysql-client
+    - |
+      until nc -z -v -w30 mysql 3306; do
+        echo "Waiting for MySQL..."
+        sleep 1
+      done
+    - mysql -h mysql -u root -p${MYSQL_TEST_ROOT_PASSWORD} -e "CREATE DATABASE IF NOT EXISTS nestjs_template_test;"
+  script:
+    - npm run test:e2e
+
+build:
+  stage: build
+  needs:
+    - install_dependencies
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+
+docker_build:
+  stage: docker
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  variables:
+    DOCKER_TLS_CERTDIR: '/certs'
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $DOCKER_IMAGE .
+    - docker push $DOCKER_IMAGE
+  only:
+    - main
+
+k6_load_test:
+  stage: performance
+  image: grafana/k6:latest
+  needs:
+    - docker_build
+  services:
+    - name: $DOCKER_IMAGE
+      alias: app
+      command: ['node', 'dist/main']
+  variables:
+    BASE_URL: http://app:3000
+  script:
+    - sleep 10 # Give the app time to start
+    - k6 run k6/basic.js
+  artifacts:
+    paths:
+      - k6-reports/summary.html
+    reports:
+      junit: k6-report.xml
+  only:
+    - main

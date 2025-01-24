@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Get the commit message (first argument is the file containing the message)
+COMMIT_MSG=$(cat "$1")
+
+# Ensure the commit message is a single-line string (convert newlines to spaces)
+COMMIT_MSG_SINGLE_LINE=$(echo "$COMMIT_MSG" | tr '\n' ' ')
+
+echo "Checking commit message: $COMMIT_MSG_SINGLE_LINE"
+
+# Run ESLint to check spelling in the commit message
+echo "'$COMMIT_MSG_SINGLE_LINE'" | yarn eslint --stdin -c .eslintrc-spellcheck.json --format=stylish
